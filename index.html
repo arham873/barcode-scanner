@@ -1,129 +1,161 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Scan Barcode ke Google Sheets</title>
   <script src="https://unpkg.com/html5-qrcode@2.3.8/minified/html5-qrcode.min.js"></script>
   <style>
     body {
       font-family: Arial, sans-serif;
-      background: #f2f2f2;
+      background: #f7f8fa;
       text-align: center;
       margin: 0;
       padding: 0;
+    }
+    h2 {
+      background: #2196F3;
+      color: white;
+      padding: 15px;
+      margin: 0;
+      font-size: 20px;
     }
     #reader {
       width: 100%;
       max-width: 400px;
       margin: 20px auto;
-      border: 2px solid #ccc;
       border-radius: 10px;
-      background: #fff;
+      overflow: hidden;
+      background: white;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
     }
     #result {
       font-size: 1.2em;
+      margin-top: 15px;
       font-weight: bold;
       color: #333;
-      margin-top: 15px;
     }
     button {
-      margin-top: 15px;
-      padding: 10px 20px;
-      background: #2196F3;
-      color: #fff;
+      margin: 10px;
+      padding: 10px 25px;
+      font-size: 16px;
       border: none;
       border-radius: 8px;
-      font-size: 1em;
       cursor: pointer;
     }
-    button:hover {
-      background: #1976D2;
+    #startButton {
+      background: #2196F3;
+      color: white;
+    }
+    #stopButton {
+      background: #f44336;
+      color: white;
+      display: none;
+    }
+    #status {
+      color: #666;
+      font-size: 14px;
+      margin-top: 10px;
     }
   </style>
 </head>
 <body>
-  <h2>📷 Scan Barcode atau QR Code</h2>
 
+  <h2>📷 Scan Barcode / QR Code</h2>
   <div id="reader"></div>
   <div id="result">Hasil scan akan tampil di sini</div>
   <button id="startButton">Mulai Scan</button>
-  <button id="stopButton" style="display:none;">Stop Scan</button>
+  <button id="stopButton">Stop Scan</button>
+  <div id="status"></div>
 
   <script>
     const html5QrCode = new Html5Qrcode("reader");
     const startButton = document.getElementById("startButton");
     const stopButton = document.getElementById("stopButton");
     const resultDiv = document.getElementById("result");
+    const statusDiv = document.getElementById("status");
 
-    // Ganti URL ini dengan URL Apps Script Anda sendiri
-    const scriptURL = "https://script.google.com/macros/s/AKfycbx8TJwxaSEFXod6HxmpRSAQa8zqITxZweXCeBQqMWOQ-s-O-4N-EuyINW1H2VkGYgr2OA/exec";
+    // 🔗 Ganti URL ini dengan link Apps Script milik Anda
+    const scriptURL = "https://script.google.com/macros/s/AKfycbzRzF6V60TrOoUzOh4px10w9YHPu6xNyhqbrXnwBzom6JZZDIcs6L-w8K8JaV8KzHNrNA/exec";
 
     let isScanning = false;
+    let lastScanned = "";
 
     async function startScan() {
       if (isScanning) return;
       isScanning = true;
+
       resultDiv.textContent = "Mengaktifkan kamera...";
+      statusDiv.textContent = "";
 
       try {
+        // Paksa browser minta izin kamera setiap kali klik
         await navigator.mediaDevices.getUserMedia({ video: true });
+
         const cameras = await Html5Qrcode.getCameras();
-        if (cameras && cameras.length) {
-          const cameraId = cameras[0].id;
-          await html5QrCode.start(
-            cameraId,
-            { fps: 10, qrbox: 250 },
-            onScanSuccess
-          );
-          resultDiv.textContent = "Arahkan kamera ke barcode / QR Code";
-          startButton.style.display = "none";
-          stopButton.style.display = "inline-block";
-        } else {
-          resultDiv.textContent = "Kamera tidak ditemukan!";
+        if (cameras.length === 0) {
+          resultDiv.textContent = "❌ Tidak ditemukan kamera.";
           isScanning = false;
+          return;
         }
+
+        const cameraId = cameras[0].id;
+        await html5QrCode.start(
+          cameraId,
+          { fps: 10, qrbox: { width: 250, height: 250 } },
+          onScanSuccess
+        );
+
+        resultDiv.textContent = "Arahkan kamera ke barcode atau QR code.";
+        startButton.style.display = "none";
+        stopButton.style.display = "inline-block";
+
       } catch (err) {
         console.error(err);
-        resultDiv.textContent = "Gagal mengakses kamera. Pastikan izin diberikan.";
+        resultDiv.textContent = "❌ Gagal mengakses kamera. Pastikan izin diberikan.";
         isScanning = false;
       }
     }
 
     function stopScan() {
       html5QrCode.stop().then(() => {
-        resultDiv.textContent = "Scan dihentikan.";
         startButton.style.display = "inline-block";
         stopButton.style.display = "none";
+        resultDiv.textContent = "Scan dihentikan.";
+        statusDiv.textContent = "";
         isScanning = false;
-      }).catch((err) => console.error("Stop gagal:", err));
+      }).catch(err => {
+        console.error("Stop gagal:", err);
+      });
     }
 
     async function onScanSuccess(decodedText) {
-      if (!decodedText) return;
-      resultDiv.textContent = "Hasil: " + decodedText;
+      if (decodedText === lastScanned) return; // hindari double input
+      lastScanned = decodedText;
 
-      // Kirim hasil scan ke Google Sheets
+      resultDiv.textContent = "✅ Terdeteksi: " + decodedText;
+      statusDiv.textContent = "Menyimpan ke Google Sheets...";
+
       try {
         const response = await fetch(scriptURL + "?data=" + encodeURIComponent(decodedText));
         const text = await response.text();
-        console.log("Server response:", text);
-        resultDiv.textContent = "✅ Data tersimpan: " + decodedText;
+        statusDiv.textContent = "✅ Tersimpan: " + text;
       } catch (error) {
-        console.error("Gagal kirim data:", error);
-        resultDiv.textContent = "❌ Gagal kirim data ke Spreadsheet.";
+        console.error(error);
+        statusDiv.textContent = "❌ Gagal kirim ke Spreadsheet.";
       }
 
-      // Hentikan scan sementara setelah 1 hasil
-      stopScan();
+      // Pause scan sejenak agar tidak double
+      await html5QrCode.pause(true);
       setTimeout(() => {
-        startScan();
-      }, 2000); // otomatis lanjut scan lagi setelah 2 detik
+        html5QrCode.resume();
+        statusDiv.textContent = "Siap scan berikutnya...";
+      }, 2000);
     }
 
     startButton.addEventListener("click", startScan);
     stopButton.addEventListener("click", stopScan);
   </script>
+
 </body>
 </html>
-
