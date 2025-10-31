@@ -1,162 +1,153 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Scanner QR & Barcode Responsif</title>
-  <script src="https://unpkg.com/html5-qrcode" type="text/javascript"></script>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Barcode & QR Scanner → Google Sheets</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      text-align: center;
-      background: #f2f2f2;
-      margin: 0;
-      padding: 0;
-    }
-    #reader {
-      width: 320px;
-      height: 240px;
-      margin: 20px auto;
-      border: 2px solid #444;
-      border-radius: 10px;
-      background: #000;
-    }
-    #captureCanvas {
-      display: none;
-    }
-    button, select, input[type=range] {
-      margin: 5px;
-      padding: 10px 15px;
-      border-radius: 8px;
-      border: none;
-      font-size: 16px;
-    }
-    button:hover {
-      background: #ddd;
-    }
-    #controls {
-      margin-top: 10px;
-    }
+    body{font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh;align-items:center;justify-content:center;background:#f0f0f0}
+    header{padding:10px;background:#0b74de;color:#fff;text-align:center;width:100%}
+    main{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;width:100%}
+    #video-container{position:relative;width:320px;height:240px;border:3px solid #0b74de;border-radius:8px;overflow:hidden;background:#000}
+    #video{width:100%;height:100%;object-fit:cover;border-radius:8px;}
+    .scan-area{position:absolute;top:50%;left:50%;width:80%;height:50px;border:2px dashed rgba(255,255,255,0.8);transform:translate(-50%,-50%);border-radius:6px;}
+    .controls{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+    button{padding:8px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
+    input, select{padding:6px;border-radius:6px;border:1px solid #ccc}
+    #log{width:320px;max-height:120px;overflow:auto;background:#f7f7f7;padding:6px;border-radius:6px;margin-top:6px;font-size:0.85rem}
+    .range{width:200px}
   </style>
 </head>
 <body>
-  <h2>Scanner QR & Barcode</h2>
-  <div>
-    <select id="mode">
-      <option value="scan">Scan Langsung</option>
-      <option value="capture">Capture Dulu</option>
-    </select>
-  </div>
-  <div id="reader"></div>
-  <canvas id="captureCanvas"></canvas>
-  <div id="controls">
-    <button id="startBtn">Mulai</button>
-    <button id="stopBtn">Stop</button>
-    <button id="captureBtn">Capture</button>
-    <label>Zoom: <input type="range" id="zoomSlider" min="1" max="5" step="0.1" value="1"></label>
-    <button id="torchBtn">Torch</button>
-  </div>
-  <p id="result">Hasil: -</p>
+  <header><h1 style="margin:0;font-size:1rem">Scanner Barcode & QR → Google Sheets</h1></header>
+  <main>
+    <div id="video-container">
+      <video id="video" playsinline autoplay muted></video>
+      <div class="scan-area"></div>
+    </div>
+
+    <div class="controls">
+      <select id="facing" class="small">
+        <option value="environment">Kamera belakang (disarankan)</option>
+        <option value="user">Kamera depan</option>
+      </select>
+      <button id="startBtn">Mulai</button>
+      <button id="stopBtn">Stop</button>
+    </div>
+
+    <div class="controls">
+      <label>Zoom: <input type="range" id="zoomRange" min="1" max="3" step="0.1" value="1" class="range"></label>
+      <button id="torchBtn">Torch</button>
+    </div>
+
+    <div class="controls">
+      <input id="label" placeholder="Label / catatan (opsional)" style="width:120px" />
+      <input id="webhook" placeholder="URL Webhook Google Apps Script" style="width:190px" />
+    </div>
+
+    <div id="last">Hasil: -</div>
+    <div id="log"></div>
+  </main>
+
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js"></script>
   <script>
-    let html5QrCode;
-    let currentStream;
-    let currentTrack;
-    let torchOn = false;
+    const video=document.getElementById('video');
+    const startBtn=document.getElementById('startBtn');
+    const stopBtn=document.getElementById('stopBtn');
+    const last=document.getElementById('last');
+    const log=document.getElementById('log');
+    const facing=document.getElementById('facing');
+    const labelInput=document.getElementById('label');
+    const webhookInput=document.getElementById('webhook');
+    const zoomRange=document.getElementById('zoomRange');
+    const torchBtn=document.getElementById('torchBtn');
 
-    async function startScanner() {
-      const mode = document.getElementById('mode').value;
-      const reader = document.getElementById('reader');
-      const constraints = {
-        video: {
-          facingMode: 'environment',
-          width: { ideal: 640 },
-          height: { ideal: 480 },
-          focusMode: 'continuous',
-          zoom: true
-        }
-      };
+    let codeReader,stream,lastCode=null,cooldown=false,track,torchOn=false;
 
-      try {
-        currentStream = await navigator.mediaDevices.getUserMedia(constraints);
-        currentTrack = currentStream.getVideoTracks()[0];
+    function appendLog(t){const d=document.createElement('div');d.textContent='['+new Date().toLocaleTimeString()+'] '+t;log.prepend(d);}
 
-        // Autofocus
-        const capabilities = currentTrack.getCapabilities();
-        if (capabilities.focusMode) {
-          await currentTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-        }
-
-        // Pasang zoom control
-        const zoomSlider = document.getElementById('zoomSlider');
-        if (capabilities.zoom) {
-          zoomSlider.min = capabilities.zoom.min;
-          zoomSlider.max = capabilities.zoom.max;
-          zoomSlider.step = capabilities.zoom.step || 0.1;
-          zoomSlider.value = currentTrack.getSettings().zoom || 1;
-          zoomSlider.oninput = async (e) => {
-            await currentTrack.applyConstraints({ advanced: [{ zoom: e.target.value }] });
-          };
-        } else {
-          zoomSlider.disabled = true;
-        }
-
-        // Torch
-        const torchBtn = document.getElementById('torchBtn');
-        if (capabilities.torch) {
-          torchBtn.onclick = async () => {
-            torchOn = !torchOn;
-            await currentTrack.applyConstraints({ advanced: [{ torch: torchOn }] });
-          };
-        } else {
-          torchBtn.disabled = true;
-        }
-
-        if (mode === 'scan') {
-          html5QrCode = new Html5Qrcode("reader");
-          html5QrCode.start(
-            { facingMode: "environment" },
-            { fps: 10, qrbox: { width: 250, height: 250 } },
-            (decodedText) => {
-              document.getElementById('result').innerText = `Hasil: ${decodedText}`;
-            },
-            (errorMessage) => {}
-          );
-        } else {
-          const video = document.createElement('video');
-          reader.innerHTML = '';
-          reader.appendChild(video);
-          video.srcObject = currentStream;
-          video.play();
-          document.getElementById('captureBtn').onclick = async () => {
-            const canvas = document.getElementById('captureCanvas');
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            const ctx = canvas.getContext('2d');
-            ctx.drawImage(video, 0, 0);
-            const imageData = canvas.toDataURL('image/png');
-
-            const qrCode = new Html5Qrcode("reader");
-            qrCode.scanFileV2(canvas).then(decodedText => {
-              document.getElementById('result').innerText = `Hasil: ${decodedText}`;
-              qrCode.clear();
-            }).catch(err => {
-              document.getElementById('result').innerText = 'Tidak terdeteksi.';
-            });
-          };
-        }
-      } catch (err) {
-        alert('Gagal mengakses kamera: ' + err);
+    async function requestCameraPermission(){
+      try{
+        const constraints={video:{facingMode:{ideal:facing.value},width:{ideal:640},height:{ideal:480}}};
+        stream=await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject=stream;
+        await video.play();
+        appendLog('Kamera aktif');
+        track=stream.getVideoTracks()[0];
+        setupCameraControls(track);
+        return true;
+      }catch(err){
+        appendLog('Izin kamera ditolak: '+err.message);
+        alert('Izinkan akses kamera untuk memindai.');
+        return false;
       }
     }
 
-    function stopScanner() {
-      if (html5QrCode) html5QrCode.stop().catch(() => {});
-      if (currentStream) currentStream.getTracks().forEach(t => t.stop());
-      document.getElementById('reader').innerHTML = '';
+    function setupCameraControls(track){
+      const caps=track.getCapabilities?.()||{};
+      const settings=track.getSettings?.()||{};
+      if(caps.zoom){
+        zoomRange.min=caps.zoom.min||1;
+        zoomRange.max=caps.zoom.max||3;
+        zoomRange.step=caps.zoom.step||0.1;
+        zoomRange.value=settings.zoom||1;
+        zoomRange.oninput=e=>{
+          track.applyConstraints({advanced:[{zoom:+e.target.value}]});
+        };
+      }else{
+        zoomRange.disabled=true;
+      }
+      torchBtn.onclick=()=>{
+        torchOn=!torchOn;
+        track.applyConstraints({advanced:[{torch:torchOn}]}).catch(()=>{});
+        torchBtn.style.background=torchOn?'#ff9800':'#0b74de';
+      };
     }
 
-    document.getElementById('startBtn').onclick = startScanner;
-    document.getElementById('stopBtn').onclick = stopScanner;
+    async function startScanner(){
+      const ok=await requestCameraPermission();
+      if(!ok)return;
+      codeReader=new ZXing.BrowserMultiFormatReader();
+      appendLog('Scanner siap membaca QR & Barcode...');
+      try{
+        codeReader.decodeFromVideoDevice(null,video,(res,err)=>{
+          if(res)onDetected(res.getText());
+        });
+      }catch(e){appendLog('Gagal mulai scanner: '+e.message);}
+    }
+
+    function stopScanner(){
+      try{
+        if(codeReader){codeReader.reset();codeReader=null;}
+        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+        video.srcObject=null;
+        appendLog('Scanner dihentikan');
+      }catch(e){appendLog('Error stop: '+e.message);}
+    }
+
+    function onDetected(code){
+      if(cooldown&&code===lastCode)return;
+      lastCode=code;
+      last.textContent='Hasil: '+code;
+      appendLog('Terdeteksi: '+code);
+      cooldown=true;setTimeout(()=>cooldown=false,1500);
+      const webhook=webhookInput.value.trim();
+      if(webhook)postToWebhook({value:code,label:labelInput.value||'',timestamp:new Date().toISOString()});
+    }
+
+    async function postToWebhook(payload){
+      try{
+        const webhook=webhookInput.value.trim();
+        if(!webhook){appendLog('Webhook belum diisi');return;}
+        const res=await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        appendLog('Response: '+(await res.text()));
+      }catch(e){appendLog('Gagal kirim: '+e.message);}
+    }
+
+    startBtn.addEventListener('click',startScanner);
+    stopBtn.addEventListener('click',stopScanner);
+    facing.addEventListener('change',()=>{if(stream)stopScanner();startScanner();});
+    appendLog('Siap. Tekan "Mulai" untuk mulai pemindaian.');
   </script>
 </body>
 </html>
