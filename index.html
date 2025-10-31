@@ -3,25 +3,29 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-  <title>Barcode Scanner → Google Sheets</title>
+  <title>Barcode & QR Scanner → Google Sheets</title>
   <style>
-    body{font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh}
-    header{padding:10px;background:#0b74de;color:#fff;text-align:center}
-    main{flex:1;display:flex;flex-direction:column;gap:8px;padding:12px}
-    #video{width:100%;height:calc(100vh - 200px);object-fit:cover;border-radius:8px;background:#000}
-    .controls{display:flex;gap:8px;flex-wrap:wrap}
-    button{padding:10px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
-    input, select{padding:8px;border-radius:6px;border:1px solid #ccc}
-    #log{height:120px;overflow:auto;background:#f7f7f7;padding:8px;border-radius:6px}
-    .small{font-size:0.9rem}
+    body{font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh;align-items:center;justify-content:center;background:#f0f0f0}
+    header{padding:10px;background:#0b74de;color:#fff;text-align:center;width:100%}
+    main{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;width:100%}
+    #video-container{position:relative;width:320px;height:240px;border:3px solid #0b74de;border-radius:8px;overflow:hidden;background:#000}
+    #video{width:100%;height:100%;object-fit:cover;border-radius:8px;}
+    .scan-area{position:absolute;top:50%;left:50%;width:80%;height:50px;border:2px dashed rgba(255,255,255,0.8);transform:translate(-50%,-50%);border-radius:6px;}
+    .controls{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:10px}
+    button{padding:8px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
+    input, select{padding:6px;border-radius:6px;border:1px solid #ccc}
+    #log{width:320px;max-height:120px;overflow:auto;background:#f7f7f7;padding:6px;border-radius:6px;margin-top:6px;font-size:0.85rem}
   </style>
 </head>
 <body>
   <header>
-    <h1 style="margin:0;font-size:1.1rem">Scanner Barcode (Mobile) → Google Sheets</h1>
+    <h1 style="margin:0;font-size:1rem">Scanner Barcode & QR → Google Sheets</h1>
   </header>
   <main>
-    <video id="video" playsinline autoplay muted></video>
+    <div id="video-container">
+      <video id="video" playsinline autoplay muted></video>
+      <div class="scan-area"></div>
+    </div>
 
     <div class="controls">
       <select id="facing" class="small">
@@ -29,36 +33,32 @@
         <option value="user">Kamera depan</option>
       </select>
 
-      <button id="startBtn">Minta Izin Kamera & Mulai</button>
+      <button id="startBtn">Mulai</button>
       <button id="stopBtn">Stop</button>
-      <button id="snapBtn">Simpan manual</button>
-
-      <input id="label" placeholder="Label / catatan (opsional)" />
-      <input id="webhook" placeholder="URL Webhook Google Apps Script" style="flex:1" />
     </div>
 
-    <div>
-      <strong>Hasil pemindaian:</strong>
-      <div id="last" class="small">-</div>
+    <div class="controls">
+      <input id="label" placeholder="Label / catatan (opsional)" style="width:120px" />
+      <input id="webhook" placeholder="URL Webhook Google Apps Script" style="width:190px" />
     </div>
 
-    <div id="log" class="small"></div>
+    <div id="last">Hasil: -</div>
+    <div id="log"></div>
   </main>
 
-  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/browser@0.1.5/umd/index.min.js"></script>
   <script>
     const video = document.getElementById('video');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
-    const snapBtn = document.getElementById('snapBtn');
     const last = document.getElementById('last');
     const log = document.getElementById('log');
     const facing = document.getElementById('facing');
     const labelInput = document.getElementById('label');
     const webhookInput = document.getElementById('webhook');
 
-    let codeReader = null;
-    let stream = null;
+    let codeReader;
+    let stream;
     let lastCode = null;
     let cooldown = false;
 
@@ -70,101 +70,74 @@
 
     async function requestCameraPermission(){
       try {
-        const constraints = { video: { facingMode: { ideal: facing.value } } };
+        const constraints = { video: { facingMode: { ideal: facing.value }, width: {ideal:640}, height:{ideal:480} } };
         stream = await navigator.mediaDevices.getUserMedia(constraints);
         video.srcObject = stream;
         await video.play();
-        appendLog('Izin kamera diberikan dan kamera aktif.');
+        appendLog('Kamera aktif');
         return true;
       } catch (err) {
-        appendLog('Izin kamera ditolak atau tidak tersedia: ' + err.message);
+        appendLog('Izin kamera ditolak: ' + err.message);
         alert('Harap izinkan akses kamera agar pemindaian dapat berjalan.');
         return false;
       }
     }
 
     async function startScanner(){
-      appendLog('Memulai pemindai...');
-      const permission = await requestCameraPermission();
-      if (!permission) return;
+      const ok = await requestCameraPermission();
+      if(!ok) return;
 
       codeReader = new ZXing.BrowserMultiFormatReader();
+      appendLog('Scanner siap membaca Barcode dan QR...');
 
-      try{
-        codeReader.decodeFromVideoElement(video, (result, err) => {
+      try {
+        codeReader.decodeFromVideoDevice(null, video, (result, err) => {
           if(result){
             onDetected(result.getText());
           }
         });
-        appendLog('Scanner aktif.');
-      }catch(e){
-        console.error(e);
-        appendLog('Gagal memulai scanner: ' + e.message);
+      } catch(e){
+        appendLog('Gagal mulai scanner: ' + e.message);
       }
     }
 
     function stopScanner(){
       try{
-        if(codeReader){
-          codeReader.reset();
-          codeReader = null;
-        }
-        if(stream){
-          stream.getTracks().forEach(t=>t.stop());
-          stream = null;
-        }
-        video.pause();
-        video.srcObject = null;
+        if(codeReader){codeReader.reset(); codeReader = null;}
+        if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+        video.srcObject=null;
         appendLog('Scanner dihentikan');
-      }catch(e){console.error(e)}
+      }catch(e){appendLog('Error stop: '+e.message)}
     }
 
-    function onDetected(text){
-      if(cooldown && text === lastCode) return;
-      lastCode = text;
-      last.textContent = text;
-      appendLog('Terdeteksi: ' + text);
+    function onDetected(code){
+      if(cooldown && code===lastCode) return;
+      lastCode=code;
+      last.textContent='Hasil: '+code;
+      appendLog('Terdeteksi: '+code);
 
-      cooldown = true;
-      setTimeout(()=> cooldown = false, 1500);
+      cooldown=true;
+      setTimeout(()=>cooldown=false,1500);
 
-      const webhook = webhookInput.value.trim();
-      if(webhook){
-        postToWebhook({value: text, label: labelInput.value || '', timestamp:new Date().toISOString()});
-      }
+      const webhook=webhookInput.value.trim();
+      if(webhook){postToWebhook({value:code,label:labelInput.value||'',timestamp:new Date().toISOString()});}
     }
 
     async function postToWebhook(payload){
       try{
-        const webhook = webhookInput.value.trim();
-        if(!webhook) { appendLog('Webhook belum diisi'); return; }
-
-        appendLog('Mengirim ke spreadsheet...');
-        const res = await fetch(webhook, {
-          method: 'POST',
-          headers: {'Content-Type':'application/json'},
-          body: JSON.stringify(payload)
-        });
-        const text = await res.text();
-        appendLog('Response: ' + text);
-      }catch(e){
-        appendLog('Gagal kirim: ' + (e.message||e));
-      }
+        const webhook=webhookInput.value.trim();
+        if(!webhook){appendLog('Webhook belum diisi');return;}
+        const res=await fetch(webhook,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+        const txt=await res.text();
+        appendLog('Response: '+txt);
+      }catch(e){appendLog('Gagal kirim: '+e.message);}
     }
 
-    startBtn.addEventListener('click', startScanner);
-    stopBtn.addEventListener('click', stopScanner);
-    snapBtn.addEventListener('click', ()=>{
-      if(lastCode) postToWebhook({value:lastCode,label:labelInput.value||'',timestamp:new Date().toISOString(),manual:true});
-      else appendLog('Belum ada hasil pemindaian');
-    });
+    startBtn.addEventListener('click',startScanner);
+    stopBtn.addEventListener('click',stopScanner);
+    facing.addEventListener('change',()=>{if(stream)stopScanner();startScanner();});
 
-    facing.addEventListener('change', ()=>{
-      if(stream) stopScanner();
-      startScanner();
-    });
-
-    appendLog('Siap. Tekan "Minta Izin Kamera & Mulai" untuk memulai pemindaian.');
+    appendLog('Siap. Tekan "Mulai" untuk mulai pemindaian.');
   </script>
 </body>
 </html>
