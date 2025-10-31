@@ -1,72 +1,170 @@
 <!doctype html>
 <html lang="id">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
-<title>Barcode Scanner → Google Sheets</title>
-<style>
-body{font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh}
-header{padding:10px;background:#0b74de;color:#fff;text-align:center}
-main{flex:1;display:flex;flex-direction:column;gap:8px;padding:12px}
-#video{width:100%;height:calc(100vh - 200px);object-fit:cover;border-radius:8px;background:#000}
-.controls{display:flex;gap:8px;flex-wrap:wrap}
-button{padding:10px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
-input, select{padding:8px;border-radius:6px;border:1px solid #ccc}
-#log{height:120px;overflow:auto;background:#f7f7f7;padding:8px;border-radius:6px}
-.small{font-size:0.9rem}
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1" />
+  <title>Barcode Scanner → Google Sheets</title>
+  <style>
+    body{font-family:system-ui,Segoe UI,Roboto,'Helvetica Neue',Arial;margin:0;padding:0;display:flex;flex-direction:column;height:100vh}
+    header{padding:10px;background:#0b74de;color:#fff;text-align:center}
+    main{flex:1;display:flex;flex-direction:column;gap:8px;padding:12px}
+    #video{width:100%;height:calc(100vh - 200px);object-fit:cover;border-radius:8px;background:#000}
+    .controls{display:flex;gap:8px;flex-wrap:wrap}
+    button{padding:10px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
+    input, select{padding:8px;border-radius:6px;border:1px solid #ccc}
+    #log{height:120px;overflow:auto;background:#f7f7f7;padding:8px;border-radius:6px}
+    .small{font-size:0.9rem}
+  </style>
 </head>
 <body>
-<header>
-<h1 style="margin:0;font-size:1.1rem">Scanner Barcode (Mobile) → Google Sheets</h1>
-</header>
-<main>
-<video id="video" playsinline></video>
+  <header>
+    <h1 style="margin:0;font-size:1.1rem">Scanner Barcode (Mobile) → Google Sheets</h1>
+  </header>
+  <main>
+    <video id="video" playsinline autoplay muted></video>
 
+    <div class="controls">
+      <select id="facing" class="small">
+        <option value="environment">Kamera belakang (disarankan)</option>
+        <option value="user">Kamera depan</option>
+      </select>
 
-<div class="controls">
-<select id="facing" class="small">
-<option value="environment">Kamera belakang (disarankan)</option>
-<option value="user">Kamera depan</option>
-</select>
+      <button id="startBtn">Minta Izin Kamera & Mulai</button>
+      <button id="stopBtn">Stop</button>
+      <button id="snapBtn">Simpan manual</button>
 
+      <input id="label" placeholder="Label / catatan (opsional)" />
+      <input id="webhook" placeholder="URL Webhook Google Apps Script" style="flex:1" />
+    </div>
 
-<button id="startBtn">Mulai</button>
-<button id="stopBtn">Stop</button>
-<button id="snapBtn">Simpan manual</button>
+    <div>
+      <strong>Hasil pemindaian:</strong>
+      <div id="last" class="small">-</div>
+    </div>
 
+    <div id="log" class="small"></div>
+  </main>
 
-<input id="label" placeholder="Label / catatan (opsional)" />
-<input id="webhook" placeholder="URL Webhook Google Apps Script" style="flex:1" />
-</div>
+  <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
+  <script>
+    const video = document.getElementById('video');
+    const startBtn = document.getElementById('startBtn');
+    const stopBtn = document.getElementById('stopBtn');
+    const snapBtn = document.getElementById('snapBtn');
+    const last = document.getElementById('last');
+    const log = document.getElementById('log');
+    const facing = document.getElementById('facing');
+    const labelInput = document.getElementById('label');
+    const webhookInput = document.getElementById('webhook');
 
+    let codeReader = null;
+    let stream = null;
+    let lastCode = null;
+    let cooldown = false;
 
-<div>
-<strong>Hasil pemindaian:</strong>
-<div id="last" class="small">-</div>
-</div>
+    function appendLog(text){
+      const t = document.createElement('div');
+      t.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
+      log.prepend(t);
+    }
 
+    async function requestCameraPermission(){
+      try {
+        const constraints = { video: { facingMode: { ideal: facing.value } } };
+        stream = await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject = stream;
+        await video.play();
+        appendLog('Izin kamera diberikan dan kamera aktif.');
+        return true;
+      } catch (err) {
+        appendLog('Izin kamera ditolak atau tidak tersedia: ' + err.message);
+        alert('Harap izinkan akses kamera agar pemindaian dapat berjalan.');
+        return false;
+      }
+    }
 
-<div id="log" class="small"></div>
-</main>
+    async function startScanner(){
+      appendLog('Memulai pemindai...');
+      const permission = await requestCameraPermission();
+      if (!permission) return;
 
+      codeReader = new ZXing.BrowserMultiFormatReader();
 
-<script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
-<script>
-// Variabel DOM
-const video = document.getElementById('video');
-const startBtn = document.getElementById('startBtn');
-const stopBtn = document.getElementById('stopBtn');
-const snapBtn = document.getElementById('snapBtn');
-const last = document.getElementById('last');
-const log = document.getElementById('log');
-const facing = document.getElementById('facing');
-const labelInput = document.getElementById('label');
-const webhookInput = document.getElementById('webhook');
+      try{
+        codeReader.decodeFromVideoElement(video, (result, err) => {
+          if(result){
+            onDetected(result.getText());
+          }
+        });
+        appendLog('Scanner aktif.');
+      }catch(e){
+        console.error(e);
+        appendLog('Gagal memulai scanner: ' + e.message);
+      }
+    }
 
+    function stopScanner(){
+      try{
+        if(codeReader){
+          codeReader.reset();
+          codeReader = null;
+        }
+        if(stream){
+          stream.getTracks().forEach(t=>t.stop());
+          stream = null;
+        }
+        video.pause();
+        video.srcObject = null;
+        appendLog('Scanner dihentikan');
+      }catch(e){console.error(e)}
+    }
 
-let selectedDeviceId = null;
-let codeReader = null;
-let stream = null;
-let lastCode = null;
+    function onDetected(text){
+      if(cooldown && text === lastCode) return;
+      lastCode = text;
+      last.textContent = text;
+      appendLog('Terdeteksi: ' + text);
+
+      cooldown = true;
+      setTimeout(()=> cooldown = false, 1500);
+
+      const webhook = webhookInput.value.trim();
+      if(webhook){
+        postToWebhook({value: text, label: labelInput.value || '', timestamp:new Date().toISOString()});
+      }
+    }
+
+    async function postToWebhook(payload){
+      try{
+        const webhook = webhookInput.value.trim();
+        if(!webhook) { appendLog('Webhook belum diisi'); return; }
+
+        appendLog('Mengirim ke spreadsheet...');
+        const res = await fetch(webhook, {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify(payload)
+        });
+        const text = await res.text();
+        appendLog('Response: ' + text);
+      }catch(e){
+        appendLog('Gagal kirim: ' + (e.message||e));
+      }
+    }
+
+    startBtn.addEventListener('click', startScanner);
+    stopBtn.addEventListener('click', stopScanner);
+    snapBtn.addEventListener('click', ()=>{
+      if(lastCode) postToWebhook({value:lastCode,label:labelInput.value||'',timestamp:new Date().toISOString(),manual:true});
+      else appendLog('Belum ada hasil pemindaian');
+    });
+
+    facing.addEventListener('change', ()=>{
+      if(stream) stopScanner();
+      startScanner();
+    });
+
+    appendLog('Siap. Tekan "Minta Izin Kamera & Mulai" untuk memulai pemindaian.');
+  </script>
+</body>
 </html>
