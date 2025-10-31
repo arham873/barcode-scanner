@@ -67,6 +67,7 @@
       resultDiv.textContent = "Mengaktifkan kamera...";
 
       try {
+        await navigator.mediaDevices.getUserMedia({ video: true });
         const cameras = await Html5Qrcode.getCameras();
         if (cameras && cameras.length) {
           const cameraId = cameras[0].id;
@@ -125,3 +126,4 @@
   </script>
 </body>
 </html>
+
