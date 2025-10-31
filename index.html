@@ -1,163 +1,120 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Scanner Barcode - Google Sheets</title>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Scan Barcode - Google Sheets</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      text-align: center;
+      background: #f2f2f2;
+      margin: 0;
+      padding: 20px;
+    }
 
-<!-- ZXing untuk scan berbagai jenis barcode -->
-<script src="https://unpkg.com/@zxing/library@latest"></script>
+    h2 {
+      color: #333;
+    }
 
-<style>
-  * { box-sizing: border-box; }
-  body {
-    margin: 0;
-    font-family: system-ui, sans-serif;
-    background: #f9fafb;
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    color: #333;
-  }
+    #videoContainer {
+      position: relative;
+      width: 100%;
+      max-width: 400px;
+      margin: 20px auto;
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+    }
 
-  header {
-    text-align: center;
-    background: #0d6efd;
-    color: white;
-    padding: 12px;
-    font-size: 1.2em;
-    font-weight: 500;
-  }
+    video {
+      width: 100%;
+      height: auto;
+      border-radius: 12px;
+    }
 
-  main {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 16px;
-    gap: 12px;
-  }
+    button {
+      padding: 12px 20px;
+      font-size: 16px;
+      border: none;
+      border-radius: 8px;
+      background-color: #007bff;
+      color: white;
+      cursor: pointer;
+      margin-top: 10px;
+      transition: 0.3s;
+    }
 
-  video {
-    width: 100%;
-    max-width: 480px;
-    border-radius: 12px;
-    background: #000;
-  }
+    button:hover {
+      background-color: #0056b3;
+    }
 
-  #result {
-    margin-top: 10px;
-    padding: 12px;
-    background: #fff;
-    border-radius: 8px;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.1);
-    font-size: 1em;
-    text-align: center;
-    width: 100%;
-    max-width: 480px;
-  }
+    #result {
+      margin-top: 20px;
+      font-size: 18px;
+      color: #333;
+      font-weight: bold;
+      word-wrap: break-word;
+    }
 
-  button {
-    padding: 10px 16px;
-    border: none;
-    border-radius: 8px;
-    background: #0d6efd;
-    color: white;
-    font-size: 1em;
-    cursor: pointer;
-  }
-
-  button:disabled {
-    background: #888;
-  }
-
-  footer {
-    text-align: center;
-    font-size: 0.9em;
-    color: #777;
-    padding: 10px;
-  }
-
-  @media (max-width:600px) {
-    header { font-size: 1.1em; }
-    video { max-width: 100%; }
-  }
-</style>
+    @media (max-width: 600px) {
+      h2 { font-size: 20px; }
+      button { width: 100%; }
+    }
+  </style>
 </head>
 <body>
+  <h2>📱 Scan Barcode ke Google Sheets</h2>
 
-<header>📷 Scanner Barcode - Google Sheets</header>
+  <div id="videoContainer">
+    <video id="preview" autoplay playsinline></video>
+  </div>
 
-<main>
-  <video id="preview" autoplay playsinline></video>
-  <div id="result">Klik tombol di bawah untuk mulai scan</div>
-  <button id="startBtn">Mulai Scan</button>
-</main>
+  <button id="startButton">Mulai Scan</button>
 
-<footer>Powered by ZXing + Google Apps Script</footer>
+  <div id="result">Belum ada hasil scan</div>
 
-<script>
-  const codeReader = new ZXing.BrowserMultiFormatReader();
-  const videoElement = document.getElementById('preview');
-  const resultEl = document.getElementById('result');
-  const startBtn = document.getElementById('startBtn');
+  <script type="module">
+    import QrScanner from "https://cdn.jsdelivr.net/npm/qr-scanner@1.4.2/qr-scanner.min.js";
 
-  // URL Web App Anda (sudah Anda berikan)
-  const WEB_APP_URL = "https://script.google.com/macros/s/AKfycbyX8mCOq5fbkmQ-dSeB_jiIeeZfvBsKhtOfduNA91Qct4thP712tZAhY-xmjAN4uT0Ccg/exec";
+    const videoElem = document.getElementById('preview');
+    const resultElem = document.getElementById('result');
+    const startButton = document.getElementById('startButton');
 
-  let scanning = false;
+    // URL Google Apps Script Anda
+    const scriptURL = "https://script.google.com/macros/s/AKfycbyX8mCOq5fbkmQ-dSeB_jiIeeZfvBsKhtOfduNA91Qct4thP712tZAhY-xmjAN4uT0Ccg/exec";
 
-  async function startScanner() {
-    if (scanning) return;
-    scanning = true;
-    resultEl.textContent = "Mengaktifkan kamera...";
+    let scanner;
 
-    try {
-      const devices = await ZXing.BrowserMultiFormatReader.listVideoInputDevices();
-      let backCamera = devices.find(d => d.label.toLowerCase().includes('back')) || devices[0];
+    async function startScanner() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        videoElem.srcObject = stream;
 
-      await codeReader.decodeFromVideoDevice(backCamera.deviceId, 'preview', (result, err) => {
-        if (result) {
-          resultEl.textContent = "✅ Terbaca: " + result.text;
-          sendToSheet(result.text);
+        scanner = new QrScanner(videoElem, async result => {
+          const text = result.data;
+          resultElem.textContent = "✅ Hasil Scan: " + text;
 
-          // hentikan scan sebentar agar tidak spam
-          codeReader.reset();
-          scanning = false;
-          setTimeout(() => startScanner(), 3000);
-        }
-      });
-    } catch (error) {
-      resultEl.textContent = "❌ Gagal mengakses kamera: " + error;
+          // Kirim data ke Google Sheets via Apps Script
+          try {
+            await fetch(scriptURL + "?data=" + encodeURIComponent(text));
+            alert("✅ Data berhasil dikirim ke Spreadsheet!");
+          } catch (err) {
+            alert("❌ Gagal kirim ke Google Sheets: " + err);
+          }
+
+          scanner.stop(); // berhenti setelah satu kali scan
+        });
+
+        await scanner.start();
+        console.log("Scanner dimulai.");
+      } catch (error) {
+        console.error("Tidak bisa mengakses kamera:", error);
+        alert("❌ Gagal membuka kamera. Pastikan izin kamera sudah diberikan.");
+      }
     }
-  }
 
-  // Kirim hasil ke Google Sheets lewat Apps Script
-  function sendToSheet(barcode) {
-    const data = {
-      barcode: barcode,
-      device: navigator.userAgent
-    };
-    fetch(WEB_APP_URL, {
-      method: "POST",
-      body: JSON.stringify(data),
-      headers: { "Content-Type": "application/json" },
-    })
-    .then(() => {
-      console.log("✅ Data terkirim ke Google Sheets");
-    })
-    .catch((err) => {
-      console.error("Gagal kirim:", err);
-    });
-  }
-
-  startBtn.addEventListener('click', () => {
-    startScanner();
-    startBtn.disabled = true;
-    resultEl.textContent = "Arahkan kamera ke barcode...";
-  });
-</script>
-
+    startButton.addEventListener('click', startScanner);
+  </script>
 </body>
 </html>
