@@ -9,7 +9,8 @@
     header{padding:10px;background:#0b74de;color:#fff;text-align:center;width:100%}
     main{display:flex;flex-direction:column;gap:8px;align-items:center;justify-content:center;width:100%}
     #video-container{position:relative;width:320px;height:240px;border:3px solid #0b74de;border-radius:8px;overflow:hidden;background:#000}
-    #video{width:100%;height:100%;object-fit:cover;border-radius:8px;}
+    #video,#preview{width:100%;height:100%;object-fit:cover;border-radius:8px;}
+    #preview{display:none;}
     .scan-area{position:absolute;top:50%;left:50%;width:80%;height:50px;border:2px dashed rgba(255,255,255,0.8);transform:translate(-50%,-50%);border-radius:6px;}
     .controls{display:flex;gap:6px;flex-wrap:wrap;justify-content:center;margin-top:10px}
     button{padding:8px 12px;border-radius:8px;border:0;background:#0b74de;color:white;cursor:pointer}
@@ -22,18 +23,26 @@
     <h1 style="margin:0;font-size:1rem">Scanner Barcode & QR → Google Sheets</h1>
   </header>
   <main>
+    <div class="controls">
+      <select id="modeSelect">
+        <option value="live">📷 Mode Scan Langsung</option>
+        <option value="capture">🖼️ Mode Capture Sekali</option>
+      </select>
+      <select id="facing">
+        <option value="environment">Kamera belakang (disarankan)</option>
+        <option value="user">Kamera depan</option>
+      </select>
+    </div>
+
     <div id="video-container">
       <video id="video" playsinline autoplay muted></video>
+      <img id="preview" />
       <div class="scan-area"></div>
     </div>
 
     <div class="controls">
-      <select id="facing" class="small">
-        <option value="environment">Kamera belakang (disarankan)</option>
-        <option value="user">Kamera depan</option>
-      </select>
-
       <button id="startBtn">Mulai</button>
+      <button id="captureBtn">Ambil Gambar</button>
       <button id="stopBtn">Stop</button>
     </div>
 
@@ -46,95 +55,112 @@
     <div id="log"></div>
   </main>
 
-  <!-- gunakan library ZXing -->
   <script src="https://cdn.jsdelivr.net/npm/@zxing/library@0.19.1/umd/index.min.js"></script>
   <script>
-    const video = document.getElementById('video');
-    const startBtn = document.getElementById('startBtn');
-    const stopBtn = document.getElementById('stopBtn');
-    const last = document.getElementById('last');
-    const log = document.getElementById('log');
-    const facing = document.getElementById('facing');
-    const labelInput = document.getElementById('label');
-    const webhookInput = document.getElementById('webhook');
+    const video=document.getElementById('video');
+    const preview=document.getElementById('preview');
+    const startBtn=document.getElementById('startBtn');
+    const stopBtn=document.getElementById('stopBtn');
+    const captureBtn=document.getElementById('captureBtn');
+    const last=document.getElementById('last');
+    const log=document.getElementById('log');
+    const facing=document.getElementById('facing');
+    const labelInput=document.getElementById('label');
+    const webhookInput=document.getElementById('webhook');
+    const modeSelect=document.getElementById('modeSelect');
 
-    let codeReader = new ZXing.BrowserMultiFormatReader();
-    let stream;
-    let lastCode = null;
-    let cooldown = false;
+    let codeReader=new ZXing.BrowserMultiFormatReader();
+    let stream,lastCode=null,cooldown=false;
 
     function appendLog(text){
-      const t = document.createElement('div');
-      t.textContent = '[' + new Date().toLocaleTimeString() + '] ' + text;
+      const t=document.createElement('div');
+      t.textContent='['+new Date().toLocaleTimeString()+'] '+text;
       log.prepend(t);
     }
 
     async function requestCameraPermission(){
-      try {
-        const constraints = { video: { facingMode: { ideal: facing.value }, width: {ideal:640}, height:{ideal:480} } };
-        stream = await navigator.mediaDevices.getUserMedia(constraints);
-        video.srcObject = stream;
+      try{
+        const constraints={video:{facingMode:{ideal:facing.value},width:{ideal:640},height:{ideal:480}}};
+        stream=await navigator.mediaDevices.getUserMedia(constraints);
+        video.srcObject=stream;
         await video.play();
         appendLog('Kamera aktif');
         return true;
-      } catch (err) {
-        appendLog('Izin kamera ditolak: ' + err.message);
+      }catch(err){
+        appendLog('Izin kamera ditolak: '+err.message);
         alert('Harap izinkan akses kamera agar pemindaian dapat berjalan.');
         return false;
       }
     }
 
     async function startScanner(){
-      const ok = await requestCameraPermission();
-      if(!ok) return;
+      const ok=await requestCameraPermission();
+      if(!ok)return;
+      preview.style.display='none';
+      video.style.display='block';
+      const mode=modeSelect.value;
+      if(mode==="live"){
+        liveScan();
+      }else{
+        appendLog('Mode Capture aktif: tekan "Ambil Gambar" untuk baca kode.');
+      }
+    }
 
+    async function liveScan(){
       appendLog('Menyiapkan scanner...');
-
-      try {
-        const devices = await codeReader.listVideoInputDevices();
-        const selectedDevice = devices.find(d => facing.value === 'environment' ? d.label.toLowerCase().includes('back') : d.label.toLowerCase().includes('front')) || devices[0];
-
-        if(!selectedDevice){
-          appendLog('Tidak ada kamera ditemukan');
-          return;
-        }
-
-        appendLog('Menggunakan kamera: ' + selectedDevice.label);
-
-        codeReader.decodeFromVideoDevice(selectedDevice.deviceId, video, (result, err) => {
-          if(result){
-            onDetected(result.getText());
-          }
-          if(err && !(err instanceof ZXing.NotFoundException)){
-            console.warn(err);
-          }
+      try{
+        const devices=await codeReader.listVideoInputDevices();
+        const selectedDevice=devices.find(d=>facing.value==='environment'?d.label.toLowerCase().includes('back'):d.label.toLowerCase().includes('front'))||devices[0];
+        codeReader.decodeFromVideoDevice(selectedDevice.deviceId,video,(result,err)=>{
+          if(result)onDetected(result.getText());
         });
-        appendLog('Scanner siap membaca Barcode dan QR...');
-      } catch(e){
-        appendLog('Gagal memulai scanner: ' + e.message);
+        appendLog('Scanner siap membaca QR & Barcode (Live)');
+      }catch(e){
+        appendLog('Gagal memulai scanner: '+e.message);
+      }
+    }
+
+    async function captureOnce(){
+      if(!stream){
+        alert('Kamera belum aktif!');
+        return;
+      }
+      const canvas=document.createElement('canvas');
+      canvas.width=video.videoWidth;
+      canvas.height=video.videoHeight;
+      const ctx=canvas.getContext('2d');
+      ctx.drawImage(video,0,0,canvas.width,canvas.height);
+      const imgData=canvas.toDataURL('image/png');
+      preview.src=imgData;
+      preview.style.display='block';
+      video.style.display='none';
+      appendLog('Gambar diambil, membaca kode...');
+      try{
+        const result=await codeReader.decodeFromImage(preview);
+        onDetected(result.getText());
+      }catch(e){
+        appendLog('Tidak ditemukan kode pada gambar.');
       }
     }
 
     function stopScanner(){
       try{
         codeReader.reset();
-        if(stream){stream.getTracks().forEach(t=>t.stop()); stream=null;}
+        if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
         video.srcObject=null;
         appendLog('Scanner dihentikan');
-      }catch(e){appendLog('Error stop: '+e.message)}
+      }catch(e){appendLog('Error stop: '+e.message);}
     }
 
     function onDetected(code){
-      if(cooldown && code===lastCode) return;
+      if(cooldown&&code===lastCode)return;
       lastCode=code;
       last.textContent='Hasil: '+code;
       appendLog('Terdeteksi: '+code);
-
       cooldown=true;
       setTimeout(()=>cooldown=false,1500);
-
       const webhook=webhookInput.value.trim();
-      if(webhook){postToWebhook({value:code,label:labelInput.value||'',timestamp:new Date().toISOString()});}
+      if(webhook)postToWebhook({value:code,label:labelInput.value||'',timestamp:new Date().toISOString()});
     }
 
     async function postToWebhook(payload){
@@ -149,9 +175,10 @@
 
     startBtn.addEventListener('click',startScanner);
     stopBtn.addEventListener('click',stopScanner);
+    captureBtn.addEventListener('click',captureOnce);
     facing.addEventListener('change',()=>{if(stream)stopScanner();startScanner();});
 
-    appendLog('Siap. Tekan "Mulai" untuk mulai pemindaian.');
+    appendLog('Siap. Pilih mode, lalu tekan "Mulai".');
   </script>
 </body>
 </html>
