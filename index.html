@@ -1,14 +1,14 @@
 <!DOCTYPE html>
 <html lang="id">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Scan Barcode - Google Sheets</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Scan Barcode ke Google Sheets</title>
   <style>
     body {
       font-family: Arial, sans-serif;
       text-align: center;
-      background: #f2f2f2;
+      background-color: #f5f5f5;
       margin: 0;
       padding: 20px;
     }
@@ -24,13 +24,14 @@
       margin: 20px auto;
       border-radius: 12px;
       overflow: hidden;
-      box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
     }
 
     video {
       width: 100%;
       height: auto;
       border-radius: 12px;
+      background: black;
     }
 
     button {
@@ -42,7 +43,7 @@
       color: white;
       cursor: pointer;
       margin-top: 10px;
-      transition: 0.3s;
+      transition: background 0.3s;
     }
 
     button:hover {
@@ -52,8 +53,8 @@
     #result {
       margin-top: 20px;
       font-size: 18px;
-      color: #333;
       font-weight: bold;
+      color: #333;
       word-wrap: break-word;
     }
 
@@ -64,7 +65,7 @@
   </style>
 </head>
 <body>
-  <h2>📱 Scan Barcode ke Google Sheets</h2>
+  <h2>📱 Scan Barcode ke Google Spreadsheet</h2>
 
   <div id="videoContainer">
     <video id="preview" autoplay playsinline></video>
@@ -81,36 +82,47 @@
     const resultElem = document.getElementById('result');
     const startButton = document.getElementById('startButton');
 
-    // URL Google Apps Script Anda
-    const scriptURL = "https://script.google.com/macros/s/AKfycbwfXcZp_O_r_ZT8WcbiK-epQJNyuPW3JYujtk8AVF6hqfgNK5cIdJuod0paTnaRA6NFmQ/exec";
+    // 🔗 Ganti URL di bawah ini dengan URL Web App Google Apps Script Anda
+    const scriptURL = "https://script.google.com/macros/s/AKfycbxIg2BxYgHa41I9V2ipZtv-z5RB_RUWxgs7OsrFV3JusSh3xLD3CJT2dQ7BkYDz9sXk-w/exec";
 
     let scanner;
+    let isSending = false; // mencegah pengiriman ganda
 
     async function startScanner() {
       try {
+        // 🔹 Aktifkan kamera belakang
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         videoElem.srcObject = stream;
 
+        // 🔹 Inisialisasi scanner
         scanner = new QrScanner(videoElem, async result => {
-          const text = result.data;
+          const text = result.data?.trim(); // pastikan tidak undefined
+
+          // Jika belum ada hasil atau sedang mengirim, hentikan
+          if (!text || isSending) return;
+
+          isSending = true;
           resultElem.textContent = "✅ Hasil Scan: " + text;
 
-          // Kirim data ke Google Sheets via Apps Script
           try {
-            await fetch(scriptURL + "?data=" + encodeURIComponent(text));
-            alert("✅ Data berhasil dikirim ke Spreadsheet!");
+            // 🔹 Kirim hasil ke Google Sheets
+            const res = await fetch(`${scriptURL}?data=${encodeURIComponent(text)}`);
+            const msg = await res.text();
+            alert(msg); // tampilkan respon dari Apps Script
           } catch (err) {
             alert("❌ Gagal kirim ke Google Sheets: " + err);
           }
 
-          scanner.stop(); // berhenti setelah satu kali scan
+          // 🔹 Hentikan scanner setelah satu kali scan
+          scanner.stop();
+          isSending = false;
         });
 
         await scanner.start();
-        console.log("Scanner dimulai.");
+        console.log("Scanner dimulai...");
       } catch (error) {
         console.error("Tidak bisa mengakses kamera:", error);
-        alert("❌ Gagal membuka kamera. Pastikan izin kamera sudah diberikan.");
+        alert("❌ Gagal membuka kamera. Pastikan izin kamera sudah diberikan di browser Anda.");
       }
     }
 
@@ -118,4 +130,3 @@
   </script>
 </body>
 </html>
-
